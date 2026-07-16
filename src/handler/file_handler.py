@@ -20,3 +20,12 @@ def extract_strings(proc_path,min_length=4):
     pattern = rb"[ -~]{%d,}"%min_length
     strings = re.findall(pattern , data)
     return [s.decode(errors= "ignore") for s in strings]
+
+def normalize_target(user_input: str) -> str:
+    s = user_input.strip().lower()
+    # strip .exe if present
+    if s.endswith(".exe"):
+        s = s[:-4]
+    # strip common punctuation used in registry keys
+    s = s.replace("-", "")
+    return s
