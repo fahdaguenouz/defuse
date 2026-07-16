@@ -16,6 +16,40 @@ def _hive_label(hive):
     return "HKCU" if hive == winreg.HKEY_CURRENT_USER else "HKLM"
 
 def remove_from_registry(name: str) -> list:
+    removed = []
+
+    for path, hive, label in PERSISTENCE_KEYS:
+        try:
+            flags = winreg.KEY_READ | winreg.KEY_SET_VALUE
+            key   = winreg.OpenKey(hive, path, 0, flags)
+
+            to_del = []
+            i = 0
+            while True:
+                try:
+                    entry_name, value, _ = winreg.EnumValue(key, i)
+                    if (name.lower() in entry_name.lower() or
+                        name.lower() in value.lower()):
+                        to_del.append((entry_name, value))
+                    i += 1
+                except OSError:
+                    break
+
+            for entry_name, value in to_del:
+                label_str = f"{_hive_label(hive)}\\{path} → '{entry_name}' = '{value}'"
+                winreg.DeleteValue(key, entry_name)
+                removed.append(label_str)
+                print(f"[REG] Removed: {label_str}")
+
+            winreg.CloseKey(key)
+
+        except PermissionError:
+            print(f"[REG] Permission denied on {_hive_label(hive)}\\{path}")
+            print("      → re-run script as Administrator")
+        except FileNotFoundError:
+            pass
+
+    return removed
  
     removed = []
 

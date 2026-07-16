@@ -15,7 +15,6 @@ def get_remote_ips(p_name)->list:
 
 def find_ip_from_strings(name):
     for proc in psutil.process_iter(['pid', 'name']):
-        print(proc.info['pid'], proc.info['name'])
         try:
             proc_name = proc.info['name']
 
