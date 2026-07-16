@@ -249,6 +249,6 @@ Malware Analyst (Educational Lab)
 
 ---
 
-You can drop this into `README.md` and adjust wording or add your actual screenshot paths (e.g. `![Process Explorer](resources (virus)/images/processexplore.png)` if your instructor allows images).
+You can drop this into `README.md` and adjust wording or add your actual screenshot paths (e.g. `![Process Explorer](resources(virus)/images/processexplore.png)` if your instructor allows images).
 
 To check your understanding: based on this README and email, how would you verbally explain to a stakeholder *why* your tool’s summary output (registry keys removed, processes terminated, files deleted, IP found) is strong evidence that Mal-Track is fully eradicated from the VM?
