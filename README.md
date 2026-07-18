@@ -80,7 +80,8 @@ Tools used:
      `C:\Users\faguenouz\Documents\maltrack\maltrack.exe`.  
    - Identified parent/child relationships and working directory (`C:\Windows\system32`).
 
-   **Screenshot:** `processexplore.png`
+   **Process Explorer:**
+   ![Process Explorer](resources/images/processexplore.png)
 
 2. **Registry Persistence**
 
@@ -89,8 +90,10 @@ Tools used:
      - Name: `Mal-Track`  
      - Data: `C:\Users\faguenouz\Documents\maltrack\maltrack.exe`
 
-   **Screenshot:** `registery.png`  
-   **Screenshot:** `processmonitor.png`
+   **Registry Editor:**
+   ![Registry Editor](resources/images/registery.png)  
+   **Process Monitor:**
+   ![Process Monitor](resources/images/processmonitor.png)
 
 3. **Network Activity and Attacker IP**
 
@@ -98,16 +101,20 @@ Tools used:
    - Observed repeated TCP connections to `127.0.0.1` (local C2 simulation for the lab).  
    - The project defines the attacker IP as `127.0.0.1`.
 
-   **Screenshot:** `wireshark.png`  
-   **Screenshot:** `vmnetwork.png`
+   **Wireshark:**
+   ![Wireshark](resources/images/wireshark.png)  
+   **VM Network:**
+   ![VM Network](resources/images/vmnetwork.png)
 
 4. **VM Isolation and Safety**
 
    - Verified no external internet connections from the VM.  
    - Confirmed host-only network configuration.
 
-   **Screenshot:** `vmnetwork.png`  
-   **Screenshot:** `vmsnapshot.png`
+   **VM Network:**
+   ![VM Network](resources/images/vmnetwork.png)  
+   **VM Snapshot:**
+   ![VM Snapshot](resources/images/vmsnapshot.png)
 
 ### Eradication Using the Python Tool
 
@@ -142,7 +149,8 @@ Tools used:
 
    - Skipped deletion of protected system directories (e.g. `C:\Windows\system32`), logging access denied safely.
 
-   **Screenshot:** `outputoftheprog.png`
+   **Output of the program:**
+   ![Output of the program](resources/images/outputoftheprog.png)
 
 4. Verified eradication:
 
@@ -248,7 +256,3 @@ Malware Analyst (Educational Lab)
    - Proper isolation (VMs, sandboxes) and strict handling policies are mandatory when working with live samples.
 
 ---
-
-You can drop this into `README.md` and adjust wording or add your actual screenshot paths (e.g. `![Process Explorer](resources(virus)/images/processexplore.png)` if your instructor allows images).
-
-To check your understanding: based on this README and email, how would you verbally explain to a stakeholder *why* your tool’s summary output (registry keys removed, processes terminated, files deleted, IP found) is strong evidence that Mal-Track is fully eradicated from the VM?
