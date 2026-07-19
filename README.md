@@ -190,7 +190,7 @@ To prevent similar infections in a real environment:
 ## 4. Malware Mitigation Report Email
 
 ```text
-To: security@[organization].com
+To: security@fakeorganization.com
 Subject: Malware Analysis Report: Mitigation of Mal-Track (Win32/Fynloski)
 
 Dear Security Team,
@@ -232,8 +232,8 @@ If you require further details, including tool output, screenshots (registry, pr
 
 Best regards,
 Aguenouz Fahd
-Malware Analyst (Educational Lab)
-[Contact Information]
+Malware Analyst 
+faguenouz@gmail.com
 ```
 
 ---
