@@ -1,5 +1,6 @@
 import psutil
 import os
+import shutil
 from handler import file
 from handler.file import normalize_target
 
@@ -28,7 +29,6 @@ def kill_by_name(name: str):
                     try:
                         child_name = child.name()
                         
-                        # Safely try to get the executable path
                         try:
                             child_path = child.exe()
                         except psutil.AccessDenied:
@@ -41,11 +41,11 @@ def kill_by_name(name: str):
                             print(f"    - Killed child: {child_name} (PID: {child.pid})")
                             removed.append(child_name)
                             
-                            # Only delete if it's a specific file, NEVER a directory
+                            # Only delete if it's a specific file
                             if child_path and os.path.isfile(child_path):
-                                file.remove_exe(child_path)
-                                removed_paths.append(child_path)
-                                print(f"    - Deleted child executable: {child_path}")
+                                if file.remove_exe(child_path):
+                                    removed_paths.append(child_path)
+                                    print(f"    - Deleted child executable: {child_path}")
 
                     except psutil.AccessDenied:
                         print(f"[!] WARNING: Access denied to kill child {child_name}.")
@@ -65,17 +65,28 @@ def kill_by_name(name: str):
                     print(f"    - Killed parent: {proc_name} (PID: {proc.pid})")
                     removed.append(proc_name)
                     
-                    # Only delete if it's a specific file, NEVER a directory
+                    # 3. DELETE EXECUTABLE AND SAFE FOLDER CLEANUP
                     if parent_path and os.path.isfile(parent_path):
-                        file.remove_exe(parent_path)
-                        removed_paths.append(parent_path)
-                        print(f"    - Deleted parent executable: {parent_path}")
+                        # Try to delete the .exe file
+                        if file.remove_exe(parent_path):
+                            removed_paths.append(parent_path)
+                            print(f"    - Deleted parent executable: {parent_path}")
+                            
+                            # SAFE FOLDER DELETION: Check if the folder name matches the malware name
+                            parent_dir = os.path.dirname(parent_path)
+                            folder_name = os.path.basename(parent_dir).lower()
+                            
+                            if folder_name == target:
+                                try:
+                                    shutil.rmtree(parent_dir)
+                                    removed_paths.append(parent_dir)
+                                    print(f"    - Deleted malware folder: {parent_dir}")
+                                except Exception as e:
+                                    print(f"[!] WARNING: Could not delete malware folder {parent_dir}: {e}")
 
         except psutil.NoSuchProcess:
             pass
         except psutil.AccessDenied:
-            # We don't print on every single AccessDenied in process_iter to avoid console spam,
-            # but if it fails on our target, it's handled above.
             pass
         except Exception as e:
             print(f"[!] Unexpected error on PID {proc.pid}: {e}")

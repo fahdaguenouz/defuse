@@ -12,24 +12,24 @@ The tool is designed to:
 
 ### Core Modules
 
-- `file_handler.py`  
+- `file.py`  
   - Normalizes user input (`Mal-Track` → `maltrack`) for consistent matching.  
   - Deletes files or directories via `remove_exe(path)`.  
   - Extracts printable strings from the malware binary to search for embedded IPs (`extract_strings`).
 
-- `process_handler.py`  
+- `process.py`  
   - Iterates over all processes using `psutil`.  
   - Matches the target by normalized name (`maltrack`, `maltrack.exe`).  
   - Kills child processes first, then the parent.  
   - Deletes executable files and the malware working directory.  
   - Returns lists of terminated process names and removed file paths.
 
-- `network_handler.py`  
+- `network.py`  
   - Uses `psutil.net_connections()` to extract IP addresses associated with the malware process.  
   - Falls back to reading strings from the binary and using regex to find IP patterns.  
   - In this lab, ensures `127.0.0.1` is reported as the attacker IP if no other value is found.
 
-- `registry_handler.py`  
+- `registry.py`  
   - Scans common Windows persistence keys:  
     - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`  
     - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`  
@@ -103,8 +103,7 @@ Tools used:
 
    **Wireshark:**
    ![Wireshark](resources/images/wireshark.png)  
-   **VM Network:**
-   ![VM Network](resources/images/vmnetwork.png)
+
 
 4. **VM Isolation and Safety**
 
