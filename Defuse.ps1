@@ -1,496 +1,387 @@
-<#
-.SYNOPSIS
-    Defuse – Malware Analysis & Mitigation Tool (PowerShell Edition)
-    Targets: Win32/Fynloski family (e.g. Mal-Track / maltrack.exe)
-
-.DESCRIPTION
-    Replicates the full Python "Defuse" tool in a single PowerShell script.
-    Steps performed:
-        1.  Admin check
-        2.  User input  ->  normalize target name
-        3.  Network: extract attacker IPs from live connections
-                     or fall back to binary-string scanning
-        4.  Registry & Startup folder cleanup (Run / RunOnce / WOW64 / Startup)
-        5.  Process termination  ->  delete EXE  ->  delete malware folder
-        6.  Print Mitigation Summary
-
-.NOTES
-    Run from an ELEVATED (Administrator) PowerShell session.
-    Compatible with Windows PowerShell 5.1 and PowerShell 7+.
-#>
-
-#Requires -Version 5.1
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  BANNER
-# ─────────────────────────────────────────────────────────────────────────────
-function Show-Banner {
-    Write-Host ("=" * 50) -ForegroundColor Cyan
-    Write-Host "   Malware Analysis & Mitigation Tool (Defuse)   " -ForegroundColor Cyan
-    Write-Host ("=" * 50) -ForegroundColor Cyan
-    Write-Host ""
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  ADMIN CHECK  (mirrors is_admin() in main.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Test-IsAdmin {
-    $current = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-    return $current.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  NORMALIZE TARGET  (mirrors normalize_target() in file.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Get-NormalizedTarget {
-    param([string]$UserInput)
-
-    $s = $UserInput.Trim().ToLower()
-
-    # Strip .exe suffix if present
-    if ($s.EndsWith(".exe")) {
-        $s = $s.Substring(0, $s.Length - 4)
-    }
-
-    # Strip hyphens used in registry key names (e.g. "Mal-Track" -> "maltrack")
-    $s = $s -replace "-", ""
-
-    return $s
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  REGISTRY & STARTUP CLEANUP  (mirrors registry.py)
-# ─────────────────────────────────────────────────────────────────────────────
-$PERSISTENCE_PATHS = @(
-    @{ Hive = "HKCU"; Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" },
-    @{ Hive = "HKLM"; Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" },
-    @{ Hive = "HKCU"; Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" },
-    @{ Hive = "HKLM"; Path = "SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" },
-    @{ Hive = "HKLM"; Path = "SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run" }
+[CmdletBinding()]
+param(
+    [string]$Target = "maltrack",
+    [switch]$DryRun
 )
 
-function Remove-FromRegistry {
-    param([string]$Target)
+# Requires an elevated PowerShell session.
+$principal = New-Object Security.Principal.WindowsPrincipal(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+)
 
-    $removed = [System.Collections.Generic.List[string]]::new()
-
-    # ── 1. Registry Run/RunOnce keys ─────────────────────────────────────────
-    foreach ($entry in $PERSISTENCE_PATHS) {
-        $fullPath = "$($entry.Hive):\$($entry.Path)"
-
-        try {
-            if (-not (Test-Path $fullPath)) { continue }
-
-            $key = Get-Item -LiteralPath $fullPath -ErrorAction Stop
-
-            # Collect matching value names first (avoid mutating while enumerating)
-            $toDelete = @()
-            foreach ($valueName in $key.GetValueNames()) {
-                $valueData = $key.GetValue($valueName)
-                $valueStr  = if ($null -ne $valueData) { $valueData.ToString() } else { "" }
-
-                if (($valueName.ToLower() -like "*$Target*") -or
-                    ($valueStr.ToLower()  -like "*$Target*")) {
-                    $toDelete += @{ Name = $valueName; Data = $valueStr }
-                }
-            }
-
-            foreach ($item in $toDelete) {
-                $label = "$($entry.Hive)\$($entry.Path) -> '$($item.Name)' = '$($item.Data)'"
-                try {
-                    Remove-ItemProperty -LiteralPath $fullPath -Name $item.Name -ErrorAction Stop
-                    Write-Host "[REG] Removed: $label" -ForegroundColor Green
-                    $removed.Add($label)
-                }
-                catch [System.UnauthorizedAccessException] {
-                    Write-Warning "[!] Permission denied deleting '$($item.Name)'. Run as Administrator."
-                }
-                catch {
-                    Write-Warning "[!] Failed to delete '$($item.Name)': $_"
-                }
-            }
-        }
-        catch [System.UnauthorizedAccessException] {
-            Write-Warning "[!] Permission denied accessing $fullPath. Run as Administrator."
-        }
-        catch {
-            # Key simply doesn't exist - normal, skip silently
-        }
-    }
-
-    # ── 2. Startup folders ───────────────────────────────────────────────────
-    $startupFolders = @(
-        [System.IO.Path]::Combine($env:APPDATA, "Microsoft\Windows\Start Menu\Programs\Startup"),
-        [System.IO.Path]::Combine($env:ProgramData, "Microsoft\Windows\Start Menu\Programs\StartUp")
-    )
-
-    foreach ($folder in $startupFolders) {
-        if (-not (Test-Path $folder)) { continue }
-
-        try {
-            $items = Get-ChildItem -LiteralPath $folder -File -ErrorAction Stop
-            foreach ($file in $items) {
-                if ($file.Name.ToLower() -like "*$Target*") {
-                    try {
-                        Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
-                        $label = "Startup Folder File -> $($file.FullName)"
-                        Write-Host "[STARTUP] Removed file: $($file.FullName)" -ForegroundColor Green
-                        $removed.Add($label)
-                    }
-                    catch [System.UnauthorizedAccessException] {
-                        Write-Warning "[!] Permission denied deleting startup file $($file.FullName). Run as Administrator."
-                    }
-                    catch {
-                        Write-Warning "[!] Failed to delete startup file $($file.FullName): $_"
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Warning "[!] Could not read startup folder $folder : $_"
-        }
-    }
-
-    return $removed
+if (-not $principal.IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)) {
+    Write-Error "Run this script as Administrator."
+    exit 1
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  SAFE FILE DELETION  (mirrors remove_exe() in file.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Remove-MalwareFile {
-    param([string]$FilePath)
+function Normalize-Name {
+    param([string]$Name)
 
-    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) { return $false }
+    return (($Name -replace "\.exe$", "") -replace "[^a-zA-Z0-9]", "").ToLower()
+}
+
+function Remove-Safely {
+    param(
+        [string]$Path,
+        [string]$Description
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    if ($DryRun) {
+        Write-Host "[DRY-RUN] Would remove $Description`: $Path" -ForegroundColor Yellow
+        return $false
+    }
 
     try {
-        # Clear read-only attribute before deleting (mirrors os.chmod + stat.S_IWRITE)
-        $item = Get-Item -LiteralPath $FilePath -Force
-        $item.Attributes = $item.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
-
-        Remove-Item -LiteralPath $FilePath -Force -ErrorAction Stop
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        Write-Host "[+] Removed $Description`: $Path" -ForegroundColor Green
         return $true
     }
-    catch [System.UnauthorizedAccessException] {
-        Write-Warning "[!] Permission denied removing $FilePath. It might be locked."
-        return $false
-    }
     catch {
-        Write-Warning "[!] Failed to remove $FilePath : $_"
+        Write-Warning "Could not remove $Path`: $($_.Exception.Message)"
         return $false
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  PROCESS TERMINATION & FILE CLEANUP  (mirrors process.py -> kill_by_name())
-# ─────────────────────────────────────────────────────────────────────────────
-function Invoke-KillByName {
-    param([string]$Target)
+$Target = Normalize-Name $Target
 
-    $removedProcs = [System.Collections.Generic.List[string]]::new()
-    $removedPaths = [System.Collections.Generic.List[string]]::new()
-
-    try {
-        $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
-    }
-    catch {
-        Write-Warning "[!] Cannot enumerate processes: $_"
-        return $removedProcs, $removedPaths
-    }
-
-    foreach ($proc in $allProcs) {
-        $procName = if ($proc.Name) { $proc.Name } else { "" }
-        $procBase = $procName.ToLower()
-        if ($procBase.EndsWith(".exe")) { $procBase = $procBase.Substring(0, $procBase.Length - 4) }
-        $procBase = $procBase -replace "-", ""
-
-        if ($procBase -eq $Target -or $procBase -like "*$Target*") {
-            Write-Host "`n[+] Found target process: $procName (PID: $($proc.ProcessId))" -ForegroundColor Yellow
-
-            $parentPath = $proc.ExecutablePath
-
-            # ── Kill children first ───────────────────────────────────────────
-            $children = $allProcs | Where-Object { $_.ParentProcessId -eq $proc.ProcessId }
-            foreach ($child in $children) {
-                $childName = $child.Name
-                $childPath = $child.ExecutablePath
-                try {
-                    Stop-Process -Id $child.ProcessId -Force -ErrorAction Stop
-                    Write-Host "    - Killed child: $childName (PID: $($child.ProcessId))" -ForegroundColor Magenta
-                    $removedProcs.Add($childName)
-
-                    if ($childPath -and (Test-Path -LiteralPath $childPath -PathType Leaf)) {
-                        if (Remove-MalwareFile -FilePath $childPath) {
-                            $removedPaths.Add($childPath)
-                            Write-Host "    - Deleted child executable: $childPath" -ForegroundColor Red
-                        }
-                    }
-                }
-                catch [System.UnauthorizedAccessException] {
-                    Write-Warning "[!] Access denied killing child $childName."
-                }
-                catch {
-                    Write-Warning "[!] Child process error: $_"
-                }
-            }
-
-            # ── Kill parent ───────────────────────────────────────────────────
-            try {
-                Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
-                Write-Host "    - Killed parent: $procName (PID: $($proc.ProcessId))" -ForegroundColor Magenta
-                $removedProcs.Add($procName)
-
-                if ($parentPath -and (Test-Path -LiteralPath $parentPath -PathType Leaf)) {
-                    if (Remove-MalwareFile -FilePath $parentPath) {
-                        $removedPaths.Add($parentPath)
-                        Write-Host "    - Deleted parent executable: $parentPath" -ForegroundColor Red
-
-                        # Safe folder cleanup: only if folder name matches target
-                        $parentDir  = Split-Path $parentPath -Parent
-                        $folderName = (Split-Path $parentDir -Leaf).ToLower() -replace "-", ""
-
-                        if ($folderName -eq $Target) {
-                            try {
-                                Remove-Item -LiteralPath $parentDir -Recurse -Force -ErrorAction Stop
-                                $removedPaths.Add($parentDir)
-                                Write-Host "    - Deleted malware folder: $parentDir" -ForegroundColor Red
-                            }
-                            catch {
-                                Write-Warning "[!] Could not delete malware folder $parentDir : $_"
-                            }
-                        }
-                    }
-                }
-            }
-            catch [System.UnauthorizedAccessException] {
-                Write-Warning "[!] Access denied killing $procName. Run as Administrator."
-            }
-            catch {
-                Write-Warning "[!] Process error on PID $($proc.ProcessId): $_"
-            }
-        }
-    }
-
-    return $removedProcs, $removedPaths
+if ([string]::IsNullOrWhiteSpace($Target)) {
+    Write-Error "Invalid target name."
+    exit 1
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  EXTRACT PRINTABLE STRINGS FROM BINARY  (mirrors extract_strings() in file.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Get-BinaryStrings {
-    param(
-        [string]$FilePath,
-        [int]$MinLength = 4
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host " Defuse - Malware Mitigation Tool" -ForegroundColor Cyan
+Write-Host " Target: $Target" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
+
+# ------------------------------------------------------------
+# 1. Discover target processes
+# ------------------------------------------------------------
+
+$processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+
+$targetProcesses = @(
+    $processTable | Where-Object {
+        (Normalize-Name $_.Name) -eq $Target
+    }
+)
+
+if (-not $targetProcesses) {
+    Write-Warning "No process named '$Target' was found."
+    exit 0
+}
+
+$targetPids = @(
+    $targetProcesses | ForEach-Object {
+        [int]$_.ProcessId
+    }
+)
+
+Write-Host "[+] Found target PID(s): $($targetPids -join ', ')" -ForegroundColor Green
+
+# ------------------------------------------------------------
+# 2. Collect active TCP endpoints before termination
+# ------------------------------------------------------------
+
+$ips = @()
+
+try {
+    $connections = @(
+        Get-NetTCPConnection `
+            -State Established `
+            -ErrorAction Stop |
+        Where-Object {
+            $_.OwningProcess -in $targetPids
+        }
     )
 
-    try {
-        $bytes   = [System.IO.File]::ReadAllBytes($FilePath)
-        $result  = [System.Text.StringBuilder]::new()
-        $strings = [System.Collections.Generic.List[string]]::new()
-
-        foreach ($b in $bytes) {
-            if ($b -ge 0x20 -and $b -le 0x7E) {   # printable ASCII
-                [void]$result.Append([char]$b)
-            }
-            else {
-                if ($result.Length -ge $MinLength) {
-                    $strings.Add($result.ToString())
-                }
-                [void]$result.Clear()
-            }
-        }
-        # Flush last token
-        if ($result.Length -ge $MinLength) { $strings.Add($result.ToString()) }
-
-        return $strings
-    }
-    catch [System.UnauthorizedAccessException] {
-        Write-Warning "[!] Permission denied reading strings from $FilePath. Run as Admin."
-        return [System.Collections.Generic.List[string]]::new()
-    }
-    catch {
-        Write-Warning "[!] Failed to read strings from $FilePath : $_"
-        return [System.Collections.Generic.List[string]]::new()
-    }
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  FIND IPs IN STRING LIST  (mirrors find_ips() in network.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Find-IpsInStrings {
-    param($StringList)
-
-    $ipPattern = [System.Text.RegularExpressions.Regex]::new(
-        '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+    $ips = @(
+        $connections |
+        ForEach-Object { $_.RemoteAddress } |
+        Where-Object {
+            $_ -and $_ -notin @("0.0.0.0", "::", "::1")
+        } |
+        Sort-Object -Unique
     )
-    $found = [System.Collections.Generic.HashSet[string]]::new()
-
-    foreach ($s in $StringList) {
-        $matches = $ipPattern.Matches($s)
-        foreach ($m in $matches) {
-            $ip    = $m.Value
-            $parts = $ip -split '\.'
-            $valid = $true
-            foreach ($part in $parts) {
-                if ([int]$part -lt 0 -or [int]$part -gt 255) { $valid = $false; break }
-            }
-            if ($valid) { [void]$found.Add($ip) }
-        }
-    }
-
-    return [string[]]$found
+}
+catch {
+    Write-Warning "Could not read TCP connections: $($_.Exception.Message)"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  LIVE NETWORK CONNECTIONS  (mirrors get_remote_ips() in network.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Get-RemoteIPs {
-    param([string]$Target)
+if ($ips.Count -gt 0) {
+    Write-Host "[+] Observed remote endpoint(s): $($ips -join ', ')" -ForegroundColor Green
+}
+else {
+    Write-Host "[*] No established remote endpoint was observed." -ForegroundColor Yellow
+}
 
-    $ips = [System.Collections.Generic.HashSet[string]]::new()
+# ------------------------------------------------------------
+# 3. Collect executable paths
+# ------------------------------------------------------------
+
+$paths = @(
+    $targetProcesses |
+    ForEach-Object { $_.ExecutablePath } |
+    Where-Object {
+        $_ -and (Test-Path -LiteralPath $_)
+    } |
+    Sort-Object -Unique
+)
+
+foreach ($path in $paths) {
+    Write-Host "[+] Target executable: $path" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------
+# 4. Find child processes
+# ------------------------------------------------------------
+
+$allPids = [System.Collections.Generic.HashSet[int]]::new()
+
+foreach ($pid in $targetPids) {
+    [void]$allPids.Add($pid)
+}
+
+$changed = $true
+
+while ($changed) {
+    $changed = $false
+
+    foreach ($proc in $processTable) {
+        $parentPid = [int]$proc.ParentProcessId
+        $childPid = [int]$proc.ProcessId
+
+        if ($allPids.Contains($parentPid) -and
+            -not $allPids.Contains($childPid)) {
+            [void]$allPids.Add($childPid)
+            $changed = $true
+        }
+    }
+}
+
+$allPidsArray = @($allPids)
+
+if ($allPidsArray.Count -gt $targetPids.Count) {
+    Write-Host "[+] Related child PID(s): $(
+        $allPidsArray | Where-Object { $_ -notin $targetPids } -join ', '
+    )" -ForegroundColor Yellow
+}
+
+# ------------------------------------------------------------
+# 5. Remove registry persistence
+# ------------------------------------------------------------
+
+$registryLocations = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+)
+
+$removedRegistry = 0
+
+foreach ($location in $registryLocations) {
+    if (-not (Test-Path -LiteralPath $location)) {
+        continue
+    }
 
     try {
-        $netstat = netstat -ano 2>$null
+        $key = Get-Item -LiteralPath $location
+        $valueNames = @($key.GetValueNames())
 
-        foreach ($line in $netstat) {
-            if ($line -notmatch '^\s*(TCP|UDP)') { continue }
-            $parts = ($line.Trim()) -split '\s+'
+        foreach ($valueName in $valueNames) {
+            $valueData = [string]$key.GetValue($valueName)
 
-            # TCP: proto  local  remote  state  pid  (5 parts minimum)
-            # UDP: proto  local  remote  pid        (4 parts)
-            $pid = $null
-            if ($parts.Count -ge 5) { $pid = $parts[4] }
-            elseif ($parts.Count -eq 4) { $pid = $parts[3] }
-            if (-not $pid) { continue }
+            $nameMatches = (Normalize-Name $valueName) -eq $Target
+            $dataMatches = $valueData.ToLower().Contains($Target)
 
-            try {
-                $procObj = Get-Process -Id ([int]$pid) -ErrorAction SilentlyContinue
-                if (-not $procObj) { continue }
+            if ($nameMatches -or $dataMatches) {
+                if ($DryRun) {
+                    Write-Host "[DRY-RUN] Would remove registry value: $location\$valueName" `
+                        -ForegroundColor Yellow
+                }
+                else {
+                    Remove-ItemProperty `
+                        -LiteralPath $location `
+                        -Name $valueName `
+                        -Force `
+                        -ErrorAction Stop
 
-                $procBase = $procObj.ProcessName.ToLower() -replace "-", ""
-                if (-not ($procBase -like "*$Target*")) { continue }
+                    Write-Host "[+] Removed registry persistence: $location\$valueName" `
+                        -ForegroundColor Green
 
-                # Remote address is parts[2] in form  "1.2.3.4:port"
-                $remoteRaw = $parts[2]
-                if ($remoteRaw -match '^(.+):(\d+)$') {
-                    $remoteIP = $Matches[1]
-                    $skip = @("0.0.0.0", "::", "::1")
-                    if ($remoteIP -notin $skip) {
-                        [void]$ips.Add($remoteIP)
-                    }
+                    $removedRegistry++
                 }
             }
-            catch { }
         }
     }
     catch {
-        Write-Warning "[!] Cannot enumerate network connections: $_"
+        Write-Warning "Could not inspect $location`: $($_.Exception.Message)"
     }
-
-    return [string[]]$ips
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  BINARY-STRING IP FALLBACK  (mirrors find_ip_from_strings() in network.py)
-# ─────────────────────────────────────────────────────────────────────────────
-function Get-IpsFromBinary {
-    param([string]$Target)
+# ------------------------------------------------------------
+# 6. Remove matching Startup-folder files
+# ------------------------------------------------------------
 
-    try {
-        $allProcs = Get-CimInstance -ClassName Win32_Process -ErrorAction Stop
+$startupFolders = @(
+    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup",
+    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
+)
+
+$removedStartup = 0
+
+foreach ($folder in $startupFolders) {
+    if (-not (Test-Path -LiteralPath $folder)) {
+        continue
     }
-    catch { return @() }
 
-    foreach ($proc in $allProcs) {
-        $procName = if ($proc.Name) { $proc.Name } else { "" }
-        $procBase = $procName.ToLower() -replace "\.exe$", "" -replace "-", ""
+    $startupFiles = @(
+        Get-ChildItem -LiteralPath $folder -Force -File `
+            -ErrorAction SilentlyContinue |
+        Where-Object {
+            (Normalize-Name $_.Name).Contains($Target)
+        }
+    )
 
-        if ($procBase -like "*$Target*" -and $proc.ExecutablePath) {
-            $strings = Get-BinaryStrings -FilePath $proc.ExecutablePath
-            if ($strings.Count -gt 0) {
-                $ips = Find-IpsInStrings -StringList $strings
-                if ($ips.Count -gt 0) { return $ips }
-            }
+    foreach ($file in $startupFiles) {
+        if (Remove-Safely `
+            -Path $file.FullName `
+            -Description "Startup file") {
+            $removedStartup++
         }
     }
-    return @()
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  MAIN
-# ─────────────────────────────────────────────────────────────────────────────
-function Main {
-    Show-Banner
+# ------------------------------------------------------------
+# 7. Terminate target and child processes
+# ------------------------------------------------------------
 
-    # Admin check
-    if (-not (Test-IsAdmin)) {
-        Write-Host ""
-        Write-Host "[!] CRITICAL WARNING: You are NOT running as Administrator." -ForegroundColor Red
-        Write-Host "    Registry editing, network scanning, and process termination" -ForegroundColor Red
-        Write-Host "    will likely fail with 'Access Denied' errors." -ForegroundColor Red
-        Write-Host "    Please right-click PowerShell and select 'Run as Administrator'." -ForegroundColor Red
-        Write-Host ""
+$terminated = 0
+
+# Children first, then the target process.
+foreach ($pid in ($allPidsArray | Sort-Object -Descending)) {
+    try {
+        $process = Get-Process -Id $pid -ErrorAction Stop
+
+        if ($DryRun) {
+            Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $pid" `
+                -ForegroundColor Yellow
+        }
+        else {
+            Stop-Process -Id $pid -Force -ErrorAction Stop
+            Write-Host "[+] Terminated $($process.ProcessName) PID $pid" `
+                -ForegroundColor Green
+            $terminated++
+        }
     }
-
-    # User input
-    do {
-        $raw = Read-Host "[?] Enter the target [Process Name / Name in Run]"
-    } while ([string]::IsNullOrWhiteSpace($raw))
-
-    $target = Get-NormalizedTarget -UserInput $raw
-    Write-Host "`n[*] Normalized target: $target" -ForegroundColor Cyan
-
-    # 1. Network: extract attacker IPs
-    Write-Host "`n[*] Collecting attacker IPs..." -ForegroundColor Cyan
-    $ips = Get-RemoteIPs -Target $target
-
-    if ($ips.Count -eq 0) {
-        Write-Host "    - No live connections found. Scraping binary strings..." -ForegroundColor Gray
-        $ips = Get-IpsFromBinary -Target $target
+    catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+        Write-Host "[*] PID $pid is no longer running." -ForegroundColor DarkGray
     }
-
-    # Lab fallback
-    if ($ips.Count -eq 0) {
-        $ips = @("127.0.0.1")
+    catch {
+        Write-Warning "Could not terminate PID $pid`: $($_.Exception.Message)"
     }
-
-    Write-Host "    -> Identified IPs: $($ips -join ', ')" -ForegroundColor White
-
-    # 2. Registry & Startup cleanup
-    Write-Host "`n[*] Removing persistence from registry & startup folders..." -ForegroundColor Cyan
-    $removedKeys = Remove-FromRegistry -Target $target
-
-    # 3. Process termination & file deletion
-    Write-Host "`n[*] Killing processes and deleting binaries..." -ForegroundColor Cyan
-    $removedProcs, $removedPaths = Invoke-KillByName -Target $target
-
-    # 4. Mitigation Summary
-    Write-Host ""
-    Write-Host ("=" * 50) -ForegroundColor Cyan
-    Write-Host "                MITIGATION SUMMARY                " -ForegroundColor Cyan
-    Write-Host ("=" * 50) -ForegroundColor Cyan
-
-    Write-Host "  [+] Attacker IPs         : $($ips -join ', ')" -ForegroundColor Green
-
-    Write-Host "  [+] Persistence removed  : $($removedKeys.Count)" -ForegroundColor Green
-    foreach ($k in $removedKeys) {
-        Write-Host "      - $k" -ForegroundColor White
-    }
-
-    $uniqueProcs = $removedProcs | Sort-Object -Unique
-    Write-Host "  [+] Processes terminated : $($removedProcs.Count)" -ForegroundColor Green
-    foreach ($pn in $uniqueProcs) {
-        Write-Host "      - $pn" -ForegroundColor White
-    }
-
-    $uniquePaths = $removedPaths | Sort-Object -Unique
-    Write-Host "  [+] Files removed        : $($removedPaths.Count)" -ForegroundColor Green
-    foreach ($path in $uniquePaths) {
-        Write-Host "      - $path" -ForegroundColor White
-    }
-
-    Write-Host ("=" * 50) -ForegroundColor Cyan
-    Write-Host ""
 }
 
-# Entry point
-Main
+Start-Sleep -Milliseconds 500
+
+# ------------------------------------------------------------
+# 8. Delete executable and matching malware directory
+# ------------------------------------------------------------
+
+$removedFiles = 0
+
+foreach ($path in $paths) {
+    if (Remove-Safely -Path $path -Description "malware executable") {
+        $removedFiles++
+    }
+
+    $parentDirectory = Split-Path -LiteralPath $path -Parent
+    $directoryName = Split-Path -LiteralPath $parentDirectory -Leaf
+
+    # Only remove the directory when its name exactly matches the target.
+    if ((Normalize-Name $directoryName) -eq $Target -and
+        (Test-Path -LiteralPath $parentDirectory)) {
+
+        if (Remove-Safely `
+            -Path $parentDirectory `
+            -Description "malware directory") {
+            $removedFiles++
+        }
+    }
+}
+
+# ------------------------------------------------------------
+# 9. Verification
+# ------------------------------------------------------------
+
+$remainingProcesses = @(
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+        (Normalize-Name $_.Name) -eq $Target
+    }
+)
+
+$remainingRegistry = @()
+
+foreach ($location in $registryLocations) {
+    if (Test-Path -LiteralPath $location) {
+        try {
+            $key = Get-Item -LiteralPath $location
+
+            foreach ($valueName in $key.GetValueNames()) {
+                $valueData = [string]$key.GetValue($valueName)
+
+                if (
+                    (Normalize-Name $valueName) -eq $Target -or
+                    $valueData.ToLower().Contains($Target)
+                ) {
+                    $remainingRegistry += "$location\$valueName"
+                }
+            }
+        }
+        catch {
+            Write-Warning "Could not verify $location"
+        }
+    }
+}
+
+Write-Host ""
+Write-Host "============== MITIGATION SUMMARY ==============" `
+    -ForegroundColor Cyan
+Write-Host "Observed endpoint(s) : $(
+    if ($ips.Count -gt 0) { $ips -join ', ' } else { 'None' }
+)"
+Write-Host "Registry values removed: $removedRegistry"
+Write-Host "Startup files removed  : $removedStartup"
+Write-Host "Processes terminated   : $terminated"
+Write-Host "Files/directories removed: $removedFiles"
+
+if ($remainingProcesses.Count -eq 0) {
+    Write-Host "[+] Verification: target process is no longer running." `
+        -ForegroundColor Green
+}
+else {
+    Write-Warning "Verification: target process still exists."
+}
+
+if ($remainingRegistry.Count -eq 0) {
+    Write-Host "[+] Verification: no matching monitored registry values remain." `
+        -ForegroundColor Green
+}
+else {
+    Write-Warning "Matching registry values still exist:"
+    $remainingRegistry | ForEach-Object {
+        Write-Warning "  $_"
+    }
+}
+
+Write-Host "================================================" `
+    -ForegroundColor Cyan
