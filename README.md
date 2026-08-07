@@ -346,7 +346,7 @@ Kind regards,
 Malware Analyst
 [faguenouz@gmail.com](mailto:faguenouz@gmail.com)
 
-````
+```
 
 ---
 
