@@ -1,10 +1,16 @@
-[CmdletBinding()]
-param(
-    [string]$Target = "maltrack",
-    [switch]$DryRun
-)
+#Requires -RunAsAdministrator
 
-# Requires an elevated PowerShell session.
+# ============================================
+# Defuse - Malware Mitigation Tool
+# ============================================
+# Entry point that orchestrates all modules.
+#
+# Usage:
+#   .\Defuse.ps1 -Target "maltrack"
+#   .\Defuse.ps1 -Target "maltrack" -DryRun
+# ============================================
+
+# --- Elevation Check ---
 $principal = New-Object Security.Principal.WindowsPrincipal(
     [Security.Principal.WindowsIdentity]::GetCurrent()
 )
@@ -16,38 +22,19 @@ if (-not $principal.IsInRole(
     exit 1
 }
 
-function Normalize-Name {
-    param([string]$Name)
+# --- Load Modules ---
+$modulePath = Join-Path $PSScriptRoot "Modules"
 
-    return (($Name -replace "\.exe$", "") -replace "[^a-zA-Z0-9]", "").ToLower()
-}
+. (Join-Path $modulePath "Config.ps1")
+. (Join-Path $modulePath "Helpers.ps1")
+. (Join-Path $modulePath "ProcessDiscovery.ps1")
+. (Join-Path $modulePath "NetworkCollector.ps1")
+. (Join-Path $modulePath "PersistenceManager.ps1")
+. (Join-Path $modulePath "TerminationManager.ps1")
+. (Join-Path $modulePath "FileCleaner.ps1")
+. (Join-Path $modulePath "Verifier.ps1")
 
-function Remove-Safely {
-    param(
-        [string]$Path,
-        [string]$Description
-    )
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return $false
-    }
-
-    if ($DryRun) {
-        Write-Host "[DRY-RUN] Would remove $Description`: $Path" -ForegroundColor Yellow
-        return $false
-    }
-
-    try {
-        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-        Write-Host "[+] Removed $Description`: $Path" -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Warning "Could not remove $Path`: $($_.Exception.Message)"
-        return $false
-    }
-}
-
+# --- Normalize Target ---
 $Target = Normalize-Name $Target
 
 if ([string]::IsNullOrWhiteSpace($Target)) {
@@ -55,64 +42,21 @@ if ([string]::IsNullOrWhiteSpace($Target)) {
     exit 1
 }
 
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " Defuse - Malware Mitigation Tool" -ForegroundColor Cyan
-Write-Host " Target: $Target" -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
+Write-Banner -Target $Target
 
-# ------------------------------------------------------------
-# 1. Discover target processes
-# ------------------------------------------------------------
-
-$processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-
-$targetProcesses = @(
-    $processTable | Where-Object {
-        (Normalize-Name $_.Name) -eq $Target
-    }
-)
+# --- 1. Discover Target Processes ---
+$targetProcesses = Find-TargetProcesses -Target $Target
 
 if (-not $targetProcesses) {
     Write-Warning "No process named '$Target' was found."
     exit 0
 }
 
-$targetPids = @(
-    $targetProcesses | ForEach-Object {
-        [int]$_.ProcessId
-    }
-)
-
+$targetPids = @($targetProcesses | ForEach-Object { [int]$_.ProcessId })
 Write-Host "[+] Found target PID(s): $($targetPids -join ', ')" -ForegroundColor Green
 
-# ------------------------------------------------------------
-# 2. Collect active TCP endpoints before termination
-# ------------------------------------------------------------
-
-$ips = @()
-
-try {
-    $connections = @(
-        Get-NetTCPConnection `
-            -State Established `
-            -ErrorAction Stop |
-        Where-Object {
-            $_.OwningProcess -in $targetPids
-        }
-    )
-
-    $ips = @(
-        $connections |
-        ForEach-Object { $_.RemoteAddress } |
-        Where-Object {
-            $_ -and $_ -notin @("0.0.0.0", "::", "::1")
-        } |
-        Sort-Object -Unique
-    )
-}
-catch {
-    Write-Warning "Could not read TCP connections: $($_.Exception.Message)"
-}
+# --- 2. Collect Network Endpoints ---
+$ips = Get-RemoteEndpoints -Pids $targetPids
 
 if ($ips.Count -gt 0) {
     Write-Host "[+] Observed remote endpoint(s): $($ips -join ', ')" -ForegroundColor Green
@@ -121,267 +65,43 @@ else {
     Write-Host "[*] No established remote endpoint was observed." -ForegroundColor Yellow
 }
 
-# ------------------------------------------------------------
-# 3. Collect executable paths
-# ------------------------------------------------------------
-
-$paths = @(
-    $targetProcesses |
-    ForEach-Object { $_.ExecutablePath } |
-    Where-Object {
-        $_ -and (Test-Path -LiteralPath $_)
-    } |
-    Sort-Object -Unique
-)
-
+# --- 3. Collect Executable Paths ---
+$paths = Get-ExecutablePaths -Processes $targetProcesses
 foreach ($path in $paths) {
     Write-Host "[+] Target executable: $path" -ForegroundColor Green
 }
 
-# ------------------------------------------------------------
-# 4. Find child processes
-# ------------------------------------------------------------
+# --- 4. Find Child Processes ---
+$processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+$allPids = Find-ChildProcesses -ParentPids $targetPids -ProcessTable $processTable
 
-$allPids = [System.Collections.Generic.HashSet[int]]::new()
-
-foreach ($pid in $targetPids) {
-    [void]$allPids.Add($pid)
+if ($allPids.Count -gt $targetPids.Count) {
+    $childPids = $allPids | Where-Object { $_ -notin $targetPids }
+    Write-Host "[+] Related child PID(s): $($childPids -join ', ')" -ForegroundColor Yellow
 }
 
-$changed = $true
+# --- 5. Remove Registry Persistence ---
+$removedRegistry = Remove-RegistryPersistence -Target $Target -DryRun:$DryRun
 
-while ($changed) {
-    $changed = $false
+# --- 6. Remove Startup Files ---
+$removedStartup = Remove-StartupFiles -Target $Target -DryRun:$DryRun
 
-    foreach ($proc in $processTable) {
-        $parentPid = [int]$proc.ParentProcessId
-        $childPid = [int]$proc.ProcessId
+# --- 7. Terminate Processes ---
+$terminated = Stop-TargetProcesses -Pids $allPids -DryRun:$DryRun
+Start-Sleep -Milliseconds $script:PostTerminationDelay
 
-        if ($allPids.Contains($parentPid) -and
-            -not $allPids.Contains($childPid)) {
-            [void]$allPids.Add($childPid)
-            $changed = $true
-        }
-    }
-}
+# --- 8. Delete Files & Directories ---
+$removedFiles = Remove-MalwareArtifacts -Paths $paths -Target $Target -DryRun:$DryRun
 
-$allPidsArray = @($allPids)
+# --- 9. Verification ---
+$remainingProcesses = Test-RemainingProcesses -Target $Target
+$remainingRegistry  = Test-RemainingRegistry -Target $Target
 
-if ($allPidsArray.Count -gt $targetPids.Count) {
-    Write-Host "[+] Related child PID(s): $(
-        $allPidsArray | Where-Object { $_ -notin $targetPids } -join ', '
-    )" -ForegroundColor Yellow
-}
-
-# ------------------------------------------------------------
-# 5. Remove registry persistence
-# ------------------------------------------------------------
-
-$registryLocations = @(
-    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
-    "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
-    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run",
-    "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce",
-    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
-)
-
-$removedRegistry = 0
-
-foreach ($location in $registryLocations) {
-    if (-not (Test-Path -LiteralPath $location)) {
-        continue
-    }
-
-    try {
-        $key = Get-Item -LiteralPath $location
-        $valueNames = @($key.GetValueNames())
-
-        foreach ($valueName in $valueNames) {
-            $valueData = [string]$key.GetValue($valueName)
-
-            $nameMatches = (Normalize-Name $valueName) -eq $Target
-            $dataMatches = $valueData.ToLower().Contains($Target)
-
-            if ($nameMatches -or $dataMatches) {
-                if ($DryRun) {
-                    Write-Host "[DRY-RUN] Would remove registry value: $location\$valueName" `
-                        -ForegroundColor Yellow
-                }
-                else {
-                    Remove-ItemProperty `
-                        -LiteralPath $location `
-                        -Name $valueName `
-                        -Force `
-                        -ErrorAction Stop
-
-                    Write-Host "[+] Removed registry persistence: $location\$valueName" `
-                        -ForegroundColor Green
-
-                    $removedRegistry++
-                }
-            }
-        }
-    }
-    catch {
-        Write-Warning "Could not inspect $location`: $($_.Exception.Message)"
-    }
-}
-
-# ------------------------------------------------------------
-# 6. Remove matching Startup-folder files
-# ------------------------------------------------------------
-
-$startupFolders = @(
-    "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup",
-    "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Startup"
-)
-
-$removedStartup = 0
-
-foreach ($folder in $startupFolders) {
-    if (-not (Test-Path -LiteralPath $folder)) {
-        continue
-    }
-
-    $startupFiles = @(
-        Get-ChildItem -LiteralPath $folder -Force -File `
-            -ErrorAction SilentlyContinue |
-        Where-Object {
-            (Normalize-Name $_.Name).Contains($Target)
-        }
-    )
-
-    foreach ($file in $startupFiles) {
-        if (Remove-Safely `
-            -Path $file.FullName `
-            -Description "Startup file") {
-            $removedStartup++
-        }
-    }
-}
-
-# ------------------------------------------------------------
-# 7. Terminate target and child processes
-# ------------------------------------------------------------
-
-$terminated = 0
-
-# Children first, then the target process.
-foreach ($pid in ($allPidsArray | Sort-Object -Descending)) {
-    try {
-        $process = Get-Process -Id $pid -ErrorAction Stop
-
-        if ($DryRun) {
-            Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $pid" `
-                -ForegroundColor Yellow
-        }
-        else {
-            Stop-Process -Id $pid -Force -ErrorAction Stop
-            Write-Host "[+] Terminated $($process.ProcessName) PID $pid" `
-                -ForegroundColor Green
-            $terminated++
-        }
-    }
-    catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
-        Write-Host "[*] PID $pid is no longer running." -ForegroundColor DarkGray
-    }
-    catch {
-        Write-Warning "Could not terminate PID $pid`: $($_.Exception.Message)"
-    }
-}
-
-Start-Sleep -Milliseconds 500
-
-# ------------------------------------------------------------
-# 8. Delete executable and matching malware directory
-# ------------------------------------------------------------
-
-$removedFiles = 0
-
-foreach ($path in $paths) {
-    if (Remove-Safely -Path $path -Description "malware executable") {
-        $removedFiles++
-    }
-
-    $parentDirectory = Split-Path -LiteralPath $path -Parent
-    $directoryName = Split-Path -LiteralPath $parentDirectory -Leaf
-
-    # Only remove the directory when its name exactly matches the target.
-    if ((Normalize-Name $directoryName) -eq $Target -and
-        (Test-Path -LiteralPath $parentDirectory)) {
-
-        if (Remove-Safely `
-            -Path $parentDirectory `
-            -Description "malware directory") {
-            $removedFiles++
-        }
-    }
-}
-
-# ------------------------------------------------------------
-# 9. Verification
-# ------------------------------------------------------------
-
-$remainingProcesses = @(
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object {
-        (Normalize-Name $_.Name) -eq $Target
-    }
-)
-
-$remainingRegistry = @()
-
-foreach ($location in $registryLocations) {
-    if (Test-Path -LiteralPath $location) {
-        try {
-            $key = Get-Item -LiteralPath $location
-
-            foreach ($valueName in $key.GetValueNames()) {
-                $valueData = [string]$key.GetValue($valueName)
-
-                if (
-                    (Normalize-Name $valueName) -eq $Target -or
-                    $valueData.ToLower().Contains($Target)
-                ) {
-                    $remainingRegistry += "$location\$valueName"
-                }
-            }
-        }
-        catch {
-            Write-Warning "Could not verify $location"
-        }
-    }
-}
-
-Write-Host ""
-Write-Host "============== MITIGATION SUMMARY ==============" `
-    -ForegroundColor Cyan
-Write-Host "Observed endpoint(s) : $(
-    if ($ips.Count -gt 0) { $ips -join ', ' } else { 'None' }
-)"
-Write-Host "Registry values removed: $removedRegistry"
-Write-Host "Startup files removed  : $removedStartup"
-Write-Host "Processes terminated   : $terminated"
-Write-Host "Files/directories removed: $removedFiles"
-
-if ($remainingProcesses.Count -eq 0) {
-    Write-Host "[+] Verification: target process is no longer running." `
-        -ForegroundColor Green
-}
-else {
-    Write-Warning "Verification: target process still exists."
-}
-
-if ($remainingRegistry.Count -eq 0) {
-    Write-Host "[+] Verification: no matching monitored registry values remain." `
-        -ForegroundColor Green
-}
-else {
-    Write-Warning "Matching registry values still exist:"
-    $remainingRegistry | ForEach-Object {
-        Write-Warning "  $_"
-    }
-}
-
-Write-Host "================================================" `
-    -ForegroundColor Cyan
+Write-Summary `
+    -Endpoints $ips `
+    -RegistryRemoved $removedRegistry `
+    -StartupRemoved $removedStartup `
+    -Terminated $terminated `
+    -FilesRemoved $removedFiles `
+    -RemainingProcesses $remainingProcesses `
+    -RemainingRegistry $remainingRegistry
