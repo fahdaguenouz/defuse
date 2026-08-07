@@ -2,7 +2,7 @@
 
 ## 1. Program Explanation
 
-This project implements a Python-based malware remover for a Windows malware sample named **Mal-Track**, based on the Win32/Fynloski family.  
+This project implements a PowerShell-based malware remover for a Windows malware sample named **Mal-Track**, based on the Win32/Fynloski family.  
 The tool is designed to:
 
 - Identify the running malware process by name (e.g. `Mal-Track`, `maltrack`, `maltrack.exe`).
@@ -12,44 +12,147 @@ The tool is designed to:
 
 ### Core Modules
 
-- `file.py`  
-  - Normalizes user input (`Mal-Track` → `maltrack`) for consistent matching.  
-  - Deletes files or directories via `remove_exe(path)`.  
-  - Extracts printable strings from the malware binary to search for embedded IPs (`extract_strings`).
+---
 
-- `process.py`  
-  - Iterates over all processes using `psutil`.  
-  - Matches the target by normalized name (`maltrack`, `maltrack.exe`).  
-  - Kills child processes first, then the parent.  
-  - Deletes executable files and the malware working directory.  
-  - Returns lists of terminated process names and removed file paths.
+## Core Modules
 
-- `network.py`  
-  - Uses `psutil.net_connections()` to extract IP addresses associated with the malware process.  
-  - Falls back to reading strings from the binary and using regex to find IP patterns.  
-  - In this lab, ensures `127.0.0.1` is reported as the attacker IP if no other value is found.
+The project is organized into several PowerShell modules, each responsible for a specific part of the malware mitigation process.
 
-- `registry.py`  
-  - Scans common Windows persistence keys:  
-    - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`  
-    - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`  
-    - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`  
-    - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce`  
-    - `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run`  
-  - Identifies values whose names or data contain the normalized target name or executable path.  
-  - Deletes those values and logs the exact key path and value removed.
+### Defuse.ps1
 
-- `main.py`  
-  - Prompts the user for the malware name or process name.  
-  - Normalizes the input and orchestrates:
-    - IP extraction  
-    - Registry cleanup  
-    - Process termination and file deletion  
-  - Prints a **Mitigation Summary**:
-    - Attacker IPs  
-    - Registry entries removed  
-    - Processes terminated  
-    - Files/directories removed
+The main entry point of the application. This script verifies that it is running with administrator privileges, loads all required modules, validates the target malware name, and orchestrates the complete mitigation workflow. It coordinates every stage of the process, from process discovery to the final verification report.
+
+---
+
+### Config.ps1
+
+Contains the global configuration used throughout the project. It defines constants such as:
+
+- Registry locations to scan for persistence.
+- Windows Startup folders to inspect.
+- Console color definitions.
+- Timing values, such as the delay between process termination and file deletion.
+
+Keeping these values in a dedicated configuration file makes the project easier to maintain and update.
+
+---
+
+### Helpers.ps1
+
+Provides utility functions shared across multiple modules.
+
+Its responsibilities include:
+
+- Normalizing process and file names by removing the `.exe` extension, special characters, and converting names to lowercase.
+- Safely deleting files and directories while supporting **Dry Run** mode and error handling.
+- Displaying the program banner and common console output.
+
+This module avoids duplicating common functionality across the project.
+
+---
+
+### ProcessDiscovery.ps1
+
+Responsible for discovering the malware on the system.
+
+It:
+
+- Searches running processes that match the target malware name.
+- Retrieves the executable path of each matching process.
+- Recursively identifies all child processes so that the complete process tree can be terminated during mitigation.
+
+---
+
+### NetworkCollector.ps1
+
+Collects network information associated with the malware.
+
+It inspects established TCP connections belonging to the identified malware processes and extracts the unique remote IP addresses. This provides visibility into the systems with which the malware is communicating.
+
+---
+
+### PersistenceManager.ps1
+
+Removes mechanisms that allow the malware to survive a system reboot.
+
+This module:
+
+- Searches common **Run** and **RunOnce** registry keys and removes matching persistence entries.
+- Scans Windows Startup folders and deletes malicious startup files.
+- Supports **Dry Run** mode, allowing changes to be simulated without modifying the system.
+
+---
+
+### TerminationManager.ps1
+
+Handles process termination.
+
+After all related parent and child processes have been identified, this module safely terminates each process while handling processes that may have already exited. Child processes are terminated before their parents to ensure a cleaner shutdown.
+
+---
+
+### FileCleaner.ps1
+
+Removes malware files from disk.
+
+It deletes the malware executable and, when appropriate, removes its parent directory if it belongs exclusively to the malware. All deletions are performed through the shared helper functions to provide consistent logging, error handling, and Dry Run support.
+
+---
+
+### Verifier.ps1
+
+Performs the final verification phase.
+
+After mitigation is complete, it:
+
+- Checks whether any malware processes are still running.
+- Verifies that registry persistence entries have been removed.
+- Generates a mitigation summary showing the actions performed, including terminated processes, removed files, deleted registry entries, observed network endpoints, and the overall cleanup status.
+
+---
+
+### Script Overview
+
+                Defuse.ps1
+                     │
+                     ▼
+              Load all modules
+                     │
+                     ▼
+          Normalize target name
+                     │
+                     ▼
+     ProcessDiscovery.ps1
+      Find the malware process
+                     │
+                     ▼
+    NetworkCollector.ps1
+      Record remote IP addresses
+                     │
+                     ▼
+    ProcessDiscovery.ps1
+      Find executable paths
+                     │
+                     ▼
+    ProcessDiscovery.ps1
+      Find child processes
+                     │
+                     ▼
+
+PersistenceManager.ps1
+Remove registry & startup persistence
+│
+▼
+TerminationManager.ps1
+Kill all related processes
+│
+▼
+FileCleaner.ps1
+Delete malware files/directories
+│
+▼
+Verifier.ps1
+Verify cleanup and print summary
 
 ---
 
@@ -57,37 +160,35 @@ The tool is designed to:
 
 ### Environment Setup
 
-1. Created a dedicated Windows virtual machine in VirtualBox (`defuse` VM).  
-2. Configured networking as **host-only** to avoid uncontrolled internet access.  
-3. Added the malware sample (`Fynloski(ON VM ONLY).zip`) to antivirus exclusions to prevent automatic deletion.  
+1. Created a dedicated Windows virtual machine in VirtualBox (`defuse` VM).
+2. Configured networking as **host-only** to avoid uncontrolled internet access.
+3. Added the malware sample (`Fynloski(ON VM ONLY).zip`) to antivirus exclusions to prevent automatic deletion.
 4. Took an initial VM snapshot (`code vs`) to allow safe rollback.
 
 Tools used:
 
-- Process Monitor (Sysinternals) – dynamic behavior (file, registry, process activity).  
-- Process Explorer (Sysinternals) – process tree, parent/child relationships.  
-- Registry Editor – verifying persistence keys.  
-- Wireshark – capturing local network traffic and attacker IP.  
-- Python + VS Code – developing the remover.  
+- Process Monitor (Sysinternals) – dynamic behavior (file, registry, process activity).
+- Process Explorer (Sysinternals) – process tree, parent/child relationships.
+- Registry Editor – verifying persistence keys.
+- Wireshark – capturing local network traffic and attacker IP.
+- PowerShell + VS Code – developing the remover.
 - VirtualBox – isolation and snapshot management.
 
 ### Static & Dynamic Analysis
 
 1. **Execution and Process Discovery**
-
-   - Launched the malware executable (`maltrack.exe`).  
+   - Launched the malware executable (`maltrack.exe`).
    - Observed a process named `maltrack.exe` in Process Explorer with path:  
-     `C:\Users\faguenouz\Documents\maltrack\maltrack.exe`.  
+     `C:\Users\faguenouz\Documents\maltrack\maltrack.exe`.
    - Identified parent/child relationships and working directory (`C:\Windows\system32`).
 
    **Process Explorer:**
    ![Process Explorer](resources/images/processexplore.png)
 
 2. **Registry Persistence**
-
-   - Using Process Monitor + Registry Editor, observed creation of a Run entry:  
-     - Key: `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`  
-     - Name: `Mal-Track`  
+   - Using Process Monitor + Registry Editor, observed creation of a Run entry:
+     - Key: `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+     - Name: `Mal-Track`
      - Data: `C:\Users\faguenouz\Documents\maltrack\maltrack.exe`
 
    **Registry Editor:**
@@ -96,18 +197,15 @@ Tools used:
    ![Process Monitor](resources/images/processmonitor.png)
 
 3. **Network Activity and Attacker IP**
-
-   - Captured traffic with Wireshark on the loopback interface.  
-   - Observed repeated TCP connections to `127.0.0.1` (local C2 simulation for the lab).  
+   - Captured traffic with Wireshark on the loopback interface.
+   - Observed repeated TCP connections to `127.0.0.1` (local C2 simulation for the lab).
    - The project defines the attacker IP as `127.0.0.1`.
 
    **Wireshark:**
-   ![Wireshark](resources/images/wireshark.png)  
-
+   ![Wireshark](resources/images/wireshark.png)
 
 4. **VM Isolation and Safety**
-
-   - Verified no external internet connections from the VM.  
+   - Verified no external internet connections from the VM.
    - Confirmed host-only network configuration.
 
    **VM Network:**
@@ -115,48 +213,55 @@ Tools used:
    **VM Snapshot:**
    ![VM Snapshot](resources/images/vmsnapshot.png)
 
-### Eradication Using the Python Tool
+### Eradication Using the PowerShell Tool
+
+## Usage
 
 1. Ran the remover from an elevated PowerShell in the VM:
 
-   ```powershell
-   python .\main.py
-   ```
+Run **PowerShell as Administrator**, navigate to the project directory, and execute:
 
-2. When prompted `[Process Name / Name in Run]:`, entered:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\Defuse.ps1 -Target "maltrack"
+```
 
-   ```text
-   maltrack
-   ```
+2. To simulate the mitigation without making any changes:
+
+```powershell
+.\Defuse.ps1 -Target "maltrack" -DryRun
+```
+
 
 3. The tool:
 
-   - Normalized `maltrack` and matched both `maltrack.exe` and registry name `Mal-Track`.  
-   - Extracted attacker IPs (loopback packets → `127.0.0.1`).  
-   - Removed the persistence entry:
+````
+- Normalized `maltrack` and matched both `maltrack.exe` and registry name `Mal-Track`.
+- Extracted attacker IPs (loopback packets → `127.0.0.1`).
+- Removed the persistence entry:
 
-     ```text
-     [REG] Removed: HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run → 'Mal-Track' = 'C:\Users\faguenouz\Documents\maltrack\maltrack.exe'
-     ```
+  ```text
+  [REG] Removed: HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run → 'Mal-Track' = 'C:\Users\faguenouz\Documents\maltrack\maltrack.exe'
+  ```
 
-   - Killed the malware process and deleted the executable:
+- Killed the malware process and deleted the executable:
 
-     ```text
-     [PROC] Found target process: maltrack.exe (PID ...)
-     [PROC] Killed parent maltrack.exe at C:\Users\faguenouz\Documents\maltrack\maltrack.exe
-     ```
+  ```text
+  [PROC] Found target process: maltrack.exe (PID ...)
+  [PROC] Killed parent maltrack.exe at C:\Users\faguenouz\Documents\maltrack\maltrack.exe
+  ```
 
-   - Skipped deletion of protected system directories (e.g. `C:\Windows\system32`), logging access denied safely.
+- Skipped deletion of protected system directories (e.g. `C:\Windows\system32`), logging access denied safely.
 
-   **Output of the program:**
-   ![Output of the program](resources/images/outputoftheprog.png)
+**Output of the program:**
+![Output of the program](resources/images/outputoftheprog.png)
 
 4. Verified eradication:
 
-   - `maltrack.exe` no longer present in Process Explorer.  
-   - `Mal-Track` entry removed from `HKCU\...\Run`.  
-   - `C:\Users\faguenouz\Documents\maltrack\maltrack.exe` deleted.  
-   - Program summary showed 1 process terminated, 1 registry persistence entry removed, and 2 paths cleaned.
+- `maltrack.exe` no longer present in Process Explorer.
+- `Mal-Track` entry removed from `HKCU\...\Run`.
+- `C:\Users\faguenouz\Documents\maltrack\maltrack.exe` deleted.
+- Program summary showed 1 process terminated, 1 registry persistence entry removed, and 2 paths cleaned.
 
 ---
 
@@ -165,75 +270,84 @@ Tools used:
 To prevent similar infections in a real environment:
 
 - **System Hardening**
-  - Enforce least privilege; avoid users with unnecessary admin rights.
-  - Enable and maintain up‑to‑date endpoint protection (AV/EDR).
-  - Restrict execution from user profile directories (e.g. `Downloads`, `Documents`) via AppLocker or similar.
+- Enforce least privilege; avoid users with unnecessary admin rights.
+- Enable and maintain up‑to‑date endpoint protection (AV/EDR).
+- Restrict execution from user profile directories (e.g. `Downloads`, `Documents`) via AppLocker or similar.
 
 - **Monitoring & Detection**
-  - Monitor Run/RunOnce keys for suspicious entries pointing to user‑profile EXEs.
-  - Flag unusual processes with names like `maltrack.exe` running from non‑standard locations.
-  - Inspect loopback and unexpected outbound connections for C2 behavior (e.g. beaconing).
+- Monitor Run/RunOnce keys for suspicious entries pointing to user‑profile EXEs.
+- Flag unusual processes with names like `maltrack.exe` running from non‑standard locations.
+- Inspect loopback and unexpected outbound connections for C2 behavior (e.g. beaconing).
 
 - **User Awareness**
-  - Train users to avoid executing unknown binaries from email or web downloads.
-  - Implement attachment scanning and sandboxing for suspicious executables.
+- Train users to avoid executing unknown binaries from email or web downloads.
+- Implement attachment scanning and sandboxing for suspicious executables.
 
 - **Incident Response**
-  - Maintain playbooks for:
-    - Process isolation and termination.  
-    - Persistence hunting (registry, startup folders, scheduled tasks).  
-    - Safe acquisition of forensic artifacts (logs, memory, disk).
+- Maintain playbooks for:
+ - Process isolation and termination.
+ - Persistence hunting (registry, startup folders, scheduled tasks).
+ - Safe acquisition of forensic artifacts (logs, memory, disk).
 
+````
 ---
 
 ## 4. Malware Mitigation Report Email
 
 ```text
-To: security@fakeorganization.com
-Subject: Malware Analysis Report: Mitigation of Mal-Track (Win32/Fynloski)
 
 Dear Security Team,
 
-I am writing to report the successful analysis and mitigation of the malware sample "Mal-Track", associated with the Win32/Fynloski family, identified during an educational malware analysis exercise.
+I am writing to report the successful analysis and mitigation of the **Mal-Track** malware sample, identified as part of an educational malware analysis exercise involving the **Win32/Fynloski** family. The objective was to analyze the malware's behavior, identify its persistence mechanisms, and develop a PowerShell-based mitigation tool capable of safely removing the infection from a controlled Windows virtual machine.
 
-Summary:
-During execution, Mal-Track created a persistence mechanism by adding the following entry to the Windows startup registry:
-- HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
-  Name: Mal-Track
-  Data: C:\Users\faguenouz\Documents\maltrack\maltrack.exe
+### Summary of Findings
 
-The malware also ran as a process under the name "maltrack.exe", with its binary located in the user's Documents folder. Network analysis showed that the malware communicated over the loopback interface, using the IP address 127.0.0.1 as its command-and-control endpoint in this controlled lab environment.
+Dynamic analysis showed that the malware executed as **maltrack.exe** and established persistence by creating a **Run** registry entry under the current user's profile. This allowed the malware to launch automatically whenever the user logged into Windows.
 
-Proof of Mitigation:
-Using a custom Python-based remover, the following remediation steps were performed:
+Network monitoring also revealed outbound TCP connections to **127.0.0.1**, which served as the simulated command-and-control (C2) endpoint within the isolated laboratory environment.
 
-1. Registry Persistence Removal:
-   - Deleted the startup entry:
-     HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run → 'Mal-Track' = 'C:\Users\faguenouz\Documents\maltrack\maltrack.exe'
+### Mitigation Performed
 
-2. Process Termination and File Deletion:
-   - Identified and terminated the "maltrack.exe" process and its child processes.
-   - Deleted the primary malware executable:
-     C:\Users\faguenouz\Documents\maltrack\maltrack.exe
+A custom PowerShell tool, **Defuse**, was developed to automate the malware removal process. The tool performed the following actions:
 
-3. Validation:
-   - Confirmed that "maltrack.exe" no longer appears in Task Manager / Process Explorer.
-   - Verified that the "Mal-Track" registry entry is absent from all monitored Run/RunOnce locations.
-   - Confirmed that the malware binary is no longer present on disk.
+* Located all running instances of the malware by normalizing the supplied process name.
+* Identified any child processes associated with the malware.
+* Collected the remote network endpoints used by the malware.
+* Removed persistence from the monitored Windows **Run** and **RunOnce** registry keys.
+* Removed malicious startup folder entries.
+* Terminated the malware process tree.
+* Deleted the malware executable and its associated directory when appropriate.
+* Performed a post-remediation verification to confirm that no monitored persistence entries or running malware processes remained.
 
-Attacker Information:
-In this lab scenario, the malware communicated with the following IP address:
-- 127.0.0.1
+### Proof of Eradication
 
-This represents the local loopback interface used as a simulated attacker endpoint for safe, isolated testing.
+The mitigation was successfully validated through the following observations:
 
-If you require further details, including tool output, screenshots (registry, process explorer, Wireshark), or code samples of the remover, I would be happy to provide them.
+* The **maltrack.exe** process was no longer present after execution.
+* The malicious registry persistence entry was removed.
+* The malware executable was deleted from the system.
+* No monitored registry persistence remained following verification.
+* The mitigation summary confirmed successful process termination and cleanup.
 
-Best regards,
-Aguenouz Fahd
-Malware Analyst 
-faguenouz@gmail.com
-```
+### Attacker Information
+
+The malware communicated with the following endpoint during analysis:
+
+**Remote IP Address:** `127.0.0.1`
+
+This address represents the loopback interface used to simulate command-and-control communication within the isolated laboratory environment. No external network communication occurred during testing.
+
+The analysis and mitigation were performed entirely inside an isolated Windows virtual machine using host-only networking to ensure that the malware could not interact with external systems. This approach provided a safe environment for observing malicious behavior while preventing unintended propagation.
+
+Please let me know if you require additional artifacts, including execution logs, screenshots, packet captures, or the source code for the mitigation tool.
+
+Kind regards,
+
+**Aguenouz Fahd**
+Malware Analyst
+[faguenouz@gmail.com](mailto:faguenouz@gmail.com)
+
+````
 
 ---
 
