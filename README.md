@@ -293,7 +293,6 @@ To prevent similar infections in a real environment:
 
 ## 4. Malware Mitigation Report Email
 
-```text
 
 Dear Security Team,
 
@@ -346,7 +345,7 @@ Kind regards,
 Malware Analyst
 [faguenouz@gmail.com](mailto:faguenouz@gmail.com)
 
-```
+
 
 ---
 
