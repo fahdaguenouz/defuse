@@ -122,37 +122,36 @@ After mitigation is complete, it:
           Normalize target name
                      │
                      ▼
-     ProcessDiscovery.ps1
-      Find the malware process
+            ProcessDiscovery.ps1
+        Find the malware process
                      │
                      ▼
-    NetworkCollector.ps1
-      Record remote IP addresses
+          NetworkCollector.ps1
+         Record remote IP addresses
                      │
                      ▼
-    ProcessDiscovery.ps1
-      Find executable paths
+           ProcessDiscovery.ps1
+         Find executable paths
                      │
                      ▼
-    ProcessDiscovery.ps1
-      Find child processes
+           ProcessDiscovery.ps1
+            Find child processes
                      │
                      ▼
-
-PersistenceManager.ps1
-Remove registry & startup persistence
-│
-▼
-TerminationManager.ps1
-Kill all related processes
-│
-▼
-FileCleaner.ps1
-Delete malware files/directories
-│
-▼
-Verifier.ps1
-Verify cleanup and print summary
+            PersistenceManager.ps1
+       Remove registry & startup persistence
+                     │
+                     ▼
+           TerminationManager.ps1
+        Kill all related processes
+                     │
+                     ▼
+              FileCleaner.ps1
+      Delete malware files/directories
+                     │ 
+                     ▼
+               Verifier.ps1
+      Verify cleanup and print summary
 
 ---
 
