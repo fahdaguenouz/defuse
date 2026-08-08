@@ -1,5 +1,13 @@
 #Requires -RunAsAdministrator
 
+
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Target,
+
+    [switch]$DryRun
+)
+
 # ============================================
 # Defuse - Malware Mitigation Tool
 # ============================================
@@ -56,20 +64,46 @@ $targetPids = @($targetProcesses | ForEach-Object { [int]$_.ProcessId })
 Write-Host "[+] Found target PID(s): $($targetPids -join ', ')" -ForegroundColor Green
 
 # --- 2. Collect Network Endpoints ---
-$ips = Get-RemoteEndpoints -Pids $targetPids
+
+$ips = @(Get-RemoteEndpoints -Pids $targetPids)
 
 if ($ips.Count -gt 0) {
-    Write-Host "[+] Observed remote endpoint(s): $($ips -join ', ')" -ForegroundColor Green
+    Write-Host "[+] Live network endpoint(s): $($ips -join ', ')" `
+        -ForegroundColor Green
 }
 else {
-    Write-Host "[*] No established remote endpoint was observed." -ForegroundColor Yellow
+    Write-Host "[*] No live TCP endpoint observed." `
+        -ForegroundColor Yellow
 }
 
 # --- 3. Collect Executable Paths ---
-$paths = Get-ExecutablePaths -Processes $targetProcesses
+
+$paths = @(Get-ExecutablePaths -Processes $targetProcesses)
+
 foreach ($path in $paths) {
-    Write-Host "[+] Target executable: $path" -ForegroundColor Green
+    Write-Host "[+] Target executable: $path" `
+        -ForegroundColor Green
 }
+
+# --- 3b. Static IP Artifact Scan ---
+
+$staticIPs = @(Get-TargetIPArtifacts -Paths $paths)
+
+if ($staticIPs.Count -gt 0) {
+    Write-Host "[+] IP string(s) found in target artifact: $($staticIPs -join ', ')" `
+        -ForegroundColor Green
+}
+else {
+    Write-Host "[*] No IPv4 strings found in target artifact." `
+        -ForegroundColor Yellow
+}
+
+# Combine live and static results
+$ips = @(
+    $ips + $staticIPs |
+    Sort-Object -Unique
+)
+
 
 # --- 4. Find Child Processes ---
 $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
