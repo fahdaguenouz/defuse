@@ -17,6 +17,7 @@
 .OUTPUTS
     [int] Count of processes actually terminated.
 #>
+
 function Stop-TargetProcesses {
     [CmdletBinding()]
     param(
@@ -26,28 +27,33 @@ function Stop-TargetProcesses {
 
     $terminated = 0
 
-    foreach ($pid in ($Pids | Sort-Object -Descending)) {
+    foreach ($processId in ($Pids | Sort-Object -Descending)) {
         try {
-            $process = Get-Process -Id $pid -ErrorAction Stop
+            $process = Get-Process -Id $processId -ErrorAction Stop
 
             if ($DryRun) {
-                Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $pid" `
+                Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $processId" `
                     -ForegroundColor Yellow
             }
             else {
-                Stop-Process -Id $pid -Force -ErrorAction Stop
-                Write-Host "[+] Terminated $($process.ProcessName) PID $pid" `
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+
+                Write-Host "[+] Terminated $($process.ProcessName) PID $processId" `
                     -ForegroundColor Green
+
                 $terminated++
             }
         }
         catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
-            Write-Host "[*] PID $pid is no longer running." -ForegroundColor DarkGray
+            Write-Host "[*] PID $processId is no longer running." `
+                -ForegroundColor DarkGray
         }
         catch {
-            Write-Warning "Could not terminate PID $pid`: $($_.Exception.Message)"
+            Write-Warning "Could not terminate PID $processId`: $($_.Exception.Message)"
         }
     }
 
     return $terminated
 }
+
+
