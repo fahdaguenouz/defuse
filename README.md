@@ -230,7 +230,9 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```powershell
 .\Defuse.ps1 -Target "maltrack" -DryRun
 ```
-
+## Result of excution 
+  **output :**
+   ![result](resources/images/outputoftheprog.png)
 
 3. The tool:
 
