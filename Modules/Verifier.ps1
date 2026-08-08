@@ -1,8 +1,5 @@
-#Requires -RunAsAdministrator
+# Requires -RunAsAdministrator
 
-# ============================================
-# Defuse - Post-Mitigation Verification
-# ============================================
 
 <#
 .SYNOPSIS
@@ -13,13 +10,13 @@
     [array] Remaining Win32_Process objects.
 #>
 function Test-RemainingProcesses {
-    [CmdletBinding()]
-    param([string]$Target)
+  [CmdletBinding()]
+  param([string]$Target)
 
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object { (Normalize-Name $_.Name) -eq $Target }
-    )
+  return @(
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+      Where-Object { (Normalize-Name $_.Name) -eq $Target }
+  )
 }
 
 <#
@@ -31,32 +28,32 @@ function Test-RemainingProcesses {
     [array] Strings describing remaining registry values.
 #>
 function Test-RemainingRegistry {
-    [CmdletBinding()]
-    param([string]$Target)
+  [CmdletBinding()]
+  param([string]$Target)
 
-    $remaining = @()
+  $remaining = @()
 
-    foreach ($location in $script:RegistryLocations) {
-        if (Test-Path -LiteralPath $location) {
-            try {
-                $key = Get-Item -LiteralPath $location
+  foreach ($location in $script:RegistryLocations) {
+    if (Test-Path -LiteralPath $location) {
+      try {
+        $key = Get-Item -LiteralPath $location
 
-                foreach ($valueName in $key.GetValueNames()) {
-                    $valueData = [string]$key.GetValue($valueName)
+        foreach ($valueName in $key.GetValueNames()) {
+          $valueData = [string]$key.GetValue($valueName)
 
-                    if ((Normalize-Name $valueName) -eq $Target -or
-                        $valueData.ToLower().Contains($Target)) {
-                        $remaining += "$location\$valueName"
-                    }
-                }
-            }
-            catch {
-                Write-Warning "Could not verify $location"
-            }
+          if ((Normalize-Name $valueName) -eq $Target -or
+            $valueData.ToLower().Contains($Target)) {
+            $remaining += "$location\$valueName"
+          }
         }
+      }
+      catch {
+        Write-Warning "Could not verify $location"
+      }
     }
+  }
 
-    return $remaining
+  return $remaining
 }
 
 <#
@@ -78,39 +75,39 @@ function Test-RemainingRegistry {
     Array of remaining registry strings.
 #>
 function Write-Summary {
-    [CmdletBinding()]
-    param(
-        [array]$Endpoints,
-        [int]$RegistryRemoved,
-        [int]$StartupRemoved,
-        [int]$Terminated,
-        [int]$FilesRemoved,
-        [array]$RemainingProcesses,
-        [array]$RemainingRegistry
-    )
+  [CmdletBinding()]
+  param(
+    [array]$Endpoints,
+    [int]$RegistryRemoved,
+    [int]$StartupRemoved,
+    [int]$Terminated,
+    [int]$FilesRemoved,
+    [array]$RemainingProcesses,
+    [array]$RemainingRegistry
+  )
 
-    Write-Host ""
-    Write-Host "============== MITIGATION SUMMARY ==============" -ForegroundColor Cyan
-    Write-Host "Observed endpoint(s)     : $(if ($Endpoints.Count -gt 0) { $Endpoints -join ', ' } else { 'None' })"
-    Write-Host "Registry values removed  : $RegistryRemoved"
-    Write-Host "Startup files removed    : $StartupRemoved"
-    Write-Host "Processes terminated     : $Terminated"
-    Write-Host "Files/directories removed: $FilesRemoved"
+  Write-Host ""
+  Write-Host "============== MITIGATION SUMMARY ==============" -ForegroundColor Cyan
+  Write-Host "Observed endpoint(s)     : $(if ($Endpoints.Count -gt 0) { $Endpoints -join ', ' } else { 'None' })"
+  Write-Host "Registry values removed  : $RegistryRemoved"
+  Write-Host "Startup files removed    : $StartupRemoved"
+  Write-Host "Processes terminated     : $Terminated"
+  Write-Host "Files/directories removed: $FilesRemoved"
 
-    if ($RemainingProcesses.Count -eq 0) {
-        Write-Host "[+] Verification: target process is no longer running." -ForegroundColor Green
-    }
-    else {
-        Write-Warning "Verification: target process still exists."
-    }
+  if ($RemainingProcesses.Count -eq 0) {
+    Write-Host "[+] Verification: target process is no longer running." -ForegroundColor Green
+  }
+  else {
+    Write-Warning "Verification: target process still exists."
+  }
 
-    if ($RemainingRegistry.Count -eq 0) {
-        Write-Host "[+] Verification: no matching monitored registry values remain." -ForegroundColor Green
-    }
-    else {
-        Write-Warning "Matching registry values still exist:"
-        $RemainingRegistry | ForEach-Object { Write-Warning "  $_" }
-    }
+  if ($RemainingRegistry.Count -eq 0) {
+    Write-Host "[+] Verification: no matching monitored registry values remain." -ForegroundColor Green
+  }
+  else {
+    Write-Warning "Matching registry values still exist:"
+    $RemainingRegistry | ForEach-Object { Write-Warning "  $_" }
+  }
 
-    Write-Host "================================================" -ForegroundColor Cyan
+  Write-Host "================================================" -ForegroundColor Cyan
 }

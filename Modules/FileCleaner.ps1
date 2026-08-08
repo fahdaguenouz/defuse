@@ -1,8 +1,4 @@
-#Requires -RunAsAdministrator
-
-# ============================================
-# Defuse - File & Directory Cleanup
-# ============================================
+# Requires -RunAsAdministrator
 
 <#
 .SYNOPSIS
@@ -20,49 +16,50 @@
     [int] Count of items (files + directories) removed.
 #>
 function Remove-MalwareArtifacts {
-    [CmdletBinding()]
-    param(
-        [array]$Paths,
-        [string]$Target,
-        [switch]$DryRun
-    )
+  [CmdletBinding()]
+  param(
+    [array]$Paths,
+    [string]$Target,
+    [switch]$DryRun
+  )
 
-    $removed = 0
+  $removed = 0
 
-    foreach ($path in $Paths) {
-        if (Remove-Safely -Path $path -Description "malware executable" -DryRun:$DryRun) {
-            $removed++
-        }
+  foreach ($path in $Paths) {
 
-$parentDirectory = [System.IO.Path]::GetDirectoryName($path)
+    # Remove executable
+    if (Remove-Safely `
+      -Path $path `
+      -Description "malware executable" `
+      -DryRun:$DryRun) {
 
-if (-not [string]::IsNullOrWhiteSpace($parentDirectory)) {
-    $directoryName = [System.IO.Path]::GetFileName($parentDirectory)
+      $removed++
+    }
 
-    if (
+    # Get parent directory
+    $parentDirectory = [System.IO.Path]::GetDirectoryName($path)
+
+    if (-not [string]::IsNullOrWhiteSpace($parentDirectory)) {
+
+      $directoryName =
+      [System.IO.Path]::GetFileName($parentDirectory)
+
+      # Remove directory only when its name matches the target
+      if (
         (Normalize-Name $directoryName) -eq $Target -and
         (Test-Path -LiteralPath $parentDirectory)
-    ) {
-        if (
-            Remove-Safely `
-                -Path $parentDirectory `
-                -Description "malware directory" `
-                -DryRun:$DryRun
-        ) {
-            $removed++
+      ) {
+
+        if (Remove-Safely `
+          -Path $parentDirectory `
+          -Description "malware directory" `
+          -DryRun:$DryRun) {
+
+          $removed++
         }
+      }
     }
-}
+  }
 
-
-        if ((Normalize-Name $directoryName) -eq $Target -and
-            (Test-Path -LiteralPath $parentDirectory)) {
-
-            if (Remove-Safely -Path $parentDirectory -Description "malware directory" -DryRun:$DryRun) {
-                $removed++
-            }
-        }
-    }
-
-    return $removed
+  return $removed
 }

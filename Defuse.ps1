@@ -1,11 +1,10 @@
-#Requires -RunAsAdministrator
-
+# Requires -RunAsAdministrator
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Target,
+  [Parameter(Mandatory = $true)]
+  [string]$Target,
 
-    [switch]$DryRun
+  [switch]$DryRun
 )
 
 # ============================================
@@ -14,20 +13,20 @@ param(
 # Entry point that orchestrates all modules.
 #
 # Usage:
-#   .\Defuse.ps1 -Target "maltrack"
-#   .\Defuse.ps1 -Target "maltrack" -DryRun
+# .\Defuse.ps1 -Target "maltrack"
+# .\Defuse.ps1 -Target "maltrack" -DryRun
 # ============================================
 
 # --- Elevation Check ---
 $principal = New-Object Security.Principal.WindowsPrincipal(
-    [Security.Principal.WindowsIdentity]::GetCurrent()
+  [Security.Principal.WindowsIdentity]::GetCurrent()
 )
 
 if (-not $principal.IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
-)) {
-    Write-Error "Run this script as Administrator."
-    exit 1
+  )) {
+  Write-Error "Run this script as Administrator."
+  exit 1
 }
 
 # --- Load Modules ---
@@ -46,8 +45,8 @@ $modulePath = Join-Path $PSScriptRoot "Modules"
 $Target = Normalize-Name $Target
 
 if ([string]::IsNullOrWhiteSpace($Target)) {
-    Write-Error "Invalid target name."
-    exit 1
+  Write-Error "Invalid target name."
+  exit 1
 }
 
 Write-Banner -Target $Target
@@ -56,8 +55,8 @@ Write-Banner -Target $Target
 $targetProcesses = Find-TargetProcesses -Target $Target
 
 if (-not $targetProcesses) {
-    Write-Warning "No process named '$Target' was found."
-    exit 0
+  Write-Warning "No process named '$Target' was found."
+  exit 0
 }
 
 $targetPids = @($targetProcesses | ForEach-Object { [int]$_.ProcessId })
@@ -68,12 +67,12 @@ Write-Host "[+] Found target PID(s): $($targetPids -join ', ')" -ForegroundColor
 $ips = @(Get-RemoteEndpoints -Pids $targetPids)
 
 if ($ips.Count -gt 0) {
-    Write-Host "[+] Live network endpoint(s): $($ips -join ', ')" `
-        -ForegroundColor Green
+  Write-Host "[+] Live network endpoint(s): $($ips -join ', ')" `
+    -ForegroundColor Green
 }
 else {
-    Write-Host "[*] No live TCP endpoint observed." `
-        -ForegroundColor Yellow
+  Write-Host "[*] No live TCP endpoint observed." `
+    -ForegroundColor Yellow
 }
 
 # --- 3. Collect Executable Paths ---
@@ -81,8 +80,8 @@ else {
 $paths = @(Get-ExecutablePaths -Processes $targetProcesses)
 
 foreach ($path in $paths) {
-    Write-Host "[+] Target executable: $path" `
-        -ForegroundColor Green
+  Write-Host "[+] Target executable: $path" `
+    -ForegroundColor Green
 }
 
 # --- 3b. Static IP Artifact Scan ---
@@ -90,28 +89,27 @@ foreach ($path in $paths) {
 $staticIPs = @(Get-TargetIPArtifacts -Paths $paths)
 
 if ($staticIPs.Count -gt 0) {
-    Write-Host "[+] IP string(s) found in target artifact: $($staticIPs -join ', ')" `
-        -ForegroundColor Green
+  Write-Host "[+] IP string(s) found in target artifact: $($staticIPs -join ', ')" `
+    -ForegroundColor Green
 }
 else {
-    Write-Host "[*] No IPv4 strings found in target artifact." `
-        -ForegroundColor Yellow
+  Write-Host "[*] No IPv4 strings found in target artifact." `
+    -ForegroundColor Yellow
 }
 
 # Combine live and static results
 $ips = @(
-    $ips + $staticIPs |
+  $ips + $staticIPs |
     Sort-Object -Unique
 )
-
 
 # --- 4. Find Child Processes ---
 $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
 $allPids = Find-ChildProcesses -ParentPids $targetPids -ProcessTable $processTable
 
 if ($allPids.Count -gt $targetPids.Count) {
-    $childPids = $allPids | Where-Object { $_ -notin $targetPids }
-    Write-Host "[+] Related child PID(s): $($childPids -join ', ')" -ForegroundColor Yellow
+  $childPids = $allPids | Where-Object { $_ -notin $targetPids }
+  Write-Host "[+] Related child PID(s): $($childPids -join ', ')" -ForegroundColor Yellow
 }
 
 # --- 5. Remove Registry Persistence ---
@@ -129,13 +127,13 @@ $removedFiles = Remove-MalwareArtifacts -Paths $paths -Target $Target -DryRun:$D
 
 # --- 9. Verification ---
 $remainingProcesses = Test-RemainingProcesses -Target $Target
-$remainingRegistry  = Test-RemainingRegistry -Target $Target
+$remainingRegistry = Test-RemainingRegistry -Target $Target
 
 Write-Summary `
-    -Endpoints $ips `
-    -RegistryRemoved $removedRegistry `
-    -StartupRemoved $removedStartup `
-    -Terminated $terminated `
-    -FilesRemoved $removedFiles `
-    -RemainingProcesses $remainingProcesses `
-    -RemainingRegistry $remainingRegistry
+  -Endpoints $ips `
+  -RegistryRemoved $removedRegistry `
+  -StartupRemoved $removedStartup `
+  -Terminated $terminated `
+  -FilesRemoved $removedFiles `
+  -RemainingProcesses $remainingProcesses `
+  -RemainingRegistry $remainingRegistry

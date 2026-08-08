@@ -1,8 +1,5 @@
-#Requires -RunAsAdministrator
+# Requires -RunAsAdministrator
 
-# ============================================
-# Defuse - Helper Utilities
-# ============================================
 
 <#
 .SYNOPSIS
@@ -14,10 +11,10 @@
     The name to normalize.
 #>
 function Normalize-Name {
-    [CmdletBinding()]
-    param([string]$Name)
+  [CmdletBinding()]
+  param([string]$Name)
 
-    return (($Name -replace "\.exe$", "") -replace "[^a-zA-Z0-9]", "").ToLower()
+  return (($Name -replace "\.exe$", "") -replace "[^a-zA-Z0-9]", "").ToLower()
 }
 
 <#
@@ -35,35 +32,35 @@ function Normalize-Name {
     [bool] True if an item was actually removed.
 #>
 function Remove-Safely {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Path,
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)]
+    [string]$Path,
 
-        [Parameter(Mandatory)]
-        [string]$Description,
+    [Parameter(Mandatory)]
+    [string]$Description,
 
-        [switch]$DryRun
-    )
+    [switch]$DryRun
+  )
 
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return $false
-    }
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return $false
+  }
 
-    if ($DryRun) {
-        Write-Host "[DRY-RUN] Would remove $Description`: $Path" -ForegroundColor Yellow
-        return $false
-    }
+  if ($DryRun) {
+    Write-Host "[DRY-RUN] Would remove $Description`: $Path" -ForegroundColor Yellow
+    return $false
+  }
 
-    try {
-        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-        Write-Host "[+] Removed $Description`: $Path" -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Warning "Could not remove $Path`: $($_.Exception.Message)"
-        return $false
-    }
+  try {
+    Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    Write-Host "[+] Removed $Description`: $Path" -ForegroundColor Green
+    return $true
+  }
+  catch {
+    Write-Warning "Could not remove $Path`: $($_.Exception.Message)"
+    return $false
+  }
 }
 
 <#
@@ -73,11 +70,11 @@ function Remove-Safely {
     The target name to display.
 #>
 function Write-Banner {
-    [CmdletBinding()]
-    param([string]$Target)
+  [CmdletBinding()]
+  param([string]$Target)
 
-    Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host " Defuse - Malware Mitigation Tool" -ForegroundColor Cyan
-    Write-Host " Target: $Target" -ForegroundColor Cyan
-    Write-Host "============================================" -ForegroundColor Cyan
+  Write-Host "============================================" -ForegroundColor Cyan
+  Write-Host " Defuse - Malware Mitigation Tool" -ForegroundColor Cyan
+  Write-Host " Target: $Target" -ForegroundColor Cyan
+  Write-Host "============================================" -ForegroundColor Cyan
 }

@@ -1,8 +1,4 @@
-#Requires -RunAsAdministrator
-
-# ============================================
-# Defuse - Process Discovery
-# ============================================
+# Requires -RunAsAdministrator
 
 <#
 .SYNOPSIS
@@ -16,13 +12,13 @@
     [array] Matching Win32_Process objects.
 #>
 function Find-TargetProcesses {
-    [CmdletBinding()]
-    param([string]$Target)
+  [CmdletBinding()]
+  param([string]$Target)
 
-    $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  $processTable = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
 
-    return @($processTable | Where-Object {
-        (Normalize-Name $_.Name) -eq $Target
+  return @($processTable | Where-Object {
+      (Normalize-Name $_.Name) -eq $Target
     })
 }
 
@@ -35,13 +31,13 @@ function Find-TargetProcesses {
     [array] Unique, existing executable paths.
 #>
 function Get-ExecutablePaths {
-    [CmdletBinding()]
-    param([array]$Processes)
+  [CmdletBinding()]
+  param([array]$Processes)
 
-    return @($Processes |
-        ForEach-Object { $_.ExecutablePath } |
-        Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
-        Sort-Object -Unique)
+  return @($Processes |
+    ForEach-Object { $_.ExecutablePath } |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+    Sort-Object -Unique)
 }
 
 <#
@@ -59,37 +55,36 @@ function Get-ExecutablePaths {
 #>
 
 function Find-ChildProcesses {
-    [CmdletBinding()]
-    param(
-        [array]$ParentPids,
-        [array]$ProcessTable
-    )
+  [CmdletBinding()]
+  param(
+    [array]$ParentPids,
+    [array]$ProcessTable
+  )
 
-    $allPids = [System.Collections.Generic.HashSet[int]]::new()
+  $allPids = [System.Collections.Generic.HashSet[int]]::new()
 
-    foreach ($parentId in $ParentPids) {
-        [void]$allPids.Add([int]$parentId)
+  foreach ($parentId in $ParentPids) {
+    [void]$allPids.Add([int]$parentId)
+  }
+
+  $changed = $true
+
+  while ($changed) {
+    $changed = $false
+
+    foreach ($proc in $ProcessTable) {
+      $parentId = [int]$proc.ParentProcessId
+      $childId = [int]$proc.ProcessId
+
+      if (
+        $allPids.Contains($parentId) -and
+        -not $allPids.Contains($childId)
+      ) {
+        [void]$allPids.Add($childId)
+        $changed = $true
+      }
     }
+  }
 
-    $changed = $true
-
-    while ($changed) {
-        $changed = $false
-
-        foreach ($proc in $ProcessTable) {
-            $parentId = [int]$proc.ParentProcessId
-            $childId  = [int]$proc.ProcessId
-
-            if (
-                $allPids.Contains($parentId) -and
-                -not $allPids.Contains($childId)
-            ) {
-                [void]$allPids.Add($childId)
-                $changed = $true
-            }
-        }
-    }
-
-    return @($allPids)
+  return @($allPids)
 }
-

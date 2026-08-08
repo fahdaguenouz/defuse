@@ -1,8 +1,4 @@
-#Requires -RunAsAdministrator
-
-# ============================================
-# Defuse - Process Termination
-# ============================================
+# Requires -RunAsAdministrator
 
 <#
 .SYNOPSIS
@@ -19,41 +15,39 @@
 #>
 
 function Stop-TargetProcesses {
-    [CmdletBinding()]
-    param(
-        [array]$Pids,
-        [switch]$DryRun
-    )
+  [CmdletBinding()]
+  param(
+    [array]$Pids,
+    [switch]$DryRun
+  )
 
-    $terminated = 0
+  $terminated = 0
 
-    foreach ($processId in ($Pids | Sort-Object -Descending)) {
-        try {
-            $process = Get-Process -Id $processId -ErrorAction Stop
+  foreach ($processId in ($Pids | Sort-Object -Descending)) {
+    try {
+      $process = Get-Process -Id $processId -ErrorAction Stop
 
-            if ($DryRun) {
-                Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $processId" `
-                    -ForegroundColor Yellow
-            }
-            else {
-                Stop-Process -Id $processId -Force -ErrorAction Stop
+      if ($DryRun) {
+        Write-Host "[DRY-RUN] Would terminate $($process.ProcessName) PID $processId" `
+          -ForegroundColor Yellow
+      }
+      else {
+        Stop-Process -Id $processId -Force -ErrorAction Stop
 
-                Write-Host "[+] Terminated $($process.ProcessName) PID $processId" `
-                    -ForegroundColor Green
+        Write-Host "[+] Terminated $($process.ProcessName) PID $processId" `
+          -ForegroundColor Green
 
-                $terminated++
-            }
-        }
-        catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
-            Write-Host "[*] PID $processId is no longer running." `
-                -ForegroundColor DarkGray
-        }
-        catch {
-            Write-Warning "Could not terminate PID $processId`: $($_.Exception.Message)"
-        }
+        $terminated++
+      }
     }
+    catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
+      Write-Host "[*] PID $processId is no longer running." `
+        -ForegroundColor DarkGray
+    }
+    catch {
+      Write-Warning "Could not terminate PID $processId`: $($_.Exception.Message)"
+    }
+  }
 
-    return $terminated
+  return $terminated
 }
-
-
