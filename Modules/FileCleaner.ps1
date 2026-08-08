@@ -34,8 +34,26 @@ function Remove-MalwareArtifacts {
             $removed++
         }
 
-        $parentDirectory = Split-Path -LiteralPath $path -Parent
-        $directoryName   = Split-Path -LiteralPath $parentDirectory -Leaf
+$parentDirectory = [System.IO.Path]::GetDirectoryName($path)
+
+if (-not [string]::IsNullOrWhiteSpace($parentDirectory)) {
+    $directoryName = [System.IO.Path]::GetFileName($parentDirectory)
+
+    if (
+        (Normalize-Name $directoryName) -eq $Target -and
+        (Test-Path -LiteralPath $parentDirectory)
+    ) {
+        if (
+            Remove-Safely `
+                -Path $parentDirectory `
+                -Description "malware directory" `
+                -DryRun:$DryRun
+        ) {
+            $removed++
+        }
+    }
+}
+
 
         if ((Normalize-Name $directoryName) -eq $Target -and
             (Test-Path -LiteralPath $parentDirectory)) {
