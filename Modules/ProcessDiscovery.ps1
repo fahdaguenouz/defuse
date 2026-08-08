@@ -57,6 +57,7 @@ function Get-ExecutablePaths {
 .OUTPUTS
     [array] All PIDs including parents and children.
 #>
+
 function Find-ChildProcesses {
     [CmdletBinding()]
     param(
@@ -66,21 +67,24 @@ function Find-ChildProcesses {
 
     $allPids = [System.Collections.Generic.HashSet[int]]::new()
 
-    foreach ($pid in $ParentPids) {
-        [void]$allPids.Add($pid)
+    foreach ($parentId in $ParentPids) {
+        [void]$allPids.Add([int]$parentId)
     }
 
     $changed = $true
+
     while ($changed) {
         $changed = $false
 
         foreach ($proc in $ProcessTable) {
-            $parentPid = [int]$proc.ParentProcessId
-            $childPid  = [int]$proc.ProcessId
+            $parentId = [int]$proc.ParentProcessId
+            $childId  = [int]$proc.ProcessId
 
-            if ($allPids.Contains($parentPid) -and
-                -not $allPids.Contains($childPid)) {
-                [void]$allPids.Add($childPid)
+            if (
+                $allPids.Contains($parentId) -and
+                -not $allPids.Contains($childId)
+            ) {
+                [void]$allPids.Add($childId)
                 $changed = $true
             }
         }
@@ -88,3 +92,4 @@ function Find-ChildProcesses {
 
     return @($allPids)
 }
+
